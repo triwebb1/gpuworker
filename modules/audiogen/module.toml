@@ -1,0 +1,23 @@
+# Audiogen module: background music, ambience and sound effects from a text prompt, with
+# Stable Audio Open 1.0. See README.md.
+[module]
+name    = "audiogen"
+version = "0.1.0"
+
+# Oneshot keeps the worker simple: every job pays the pipeline load (load_cost_s), and
+# serve mode is the change to make if that cost matters. `standard`: diffusers loads
+# safetensors with no remote code. A diffusion model's peak is not flat, so it runs alone
+# on the vram lane.
+[[job_type]]
+id               = "audiogen.stableaudio"
+resource_class   = "vram"
+vram_mb          = 8000
+vram_profile     = "growing"
+co_resident      = false
+env              = "container"
+entrypoint       = ["/opt/venvs/audiogen/bin/python", "-m", "audiogen.generate"]
+modes            = ["oneshot"]
+load_cost_s      = 40
+keep_warm_s      = 0
+sandbox          = "standard"
+weights_required = true

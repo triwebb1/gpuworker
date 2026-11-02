@@ -1,0 +1,6 @@
+# Normalize every text file to LF in the working tree, not just in the index, so a
+# Windows checkout hashes and runs the same bytes as a Linux one.
+* text=auto eol=lf
+
+# Shell scripts run inside Linux containers.
+*.sh text eol=lf

@@ -1,0 +1,8 @@
+# Minimal config for the README quick start: one local queue tree, no container
+# runtime. Only the echo.echo job type (a host process, no GPU) can run under it.
+container_runtime = "local"
+registry_dir      = "modules"
+queue_roots       = ["./queues/demo"]
+weights_dir       = "weights"
+status_path       = "status.json"
+footprints_path   = "footprints.json"

@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1
+# gpuworker sandbox: one shared image for every module (SPEC 6.1).
+#
+# Design: one image, per-module Python venvs inside it (not one image per module).
+# The runtime container is the security boundary; the broker spawns an ephemeral
+# `--rm` container from this image per job (non-root, --cap-drop ALL, --network none,
+# read-only rootfs, RO weight cache). Modules are isolated from each other by their
+# own venvs under /opt/venvs/<module> and never need to co-run.
+#
+# Build rules:
+#   * Build online (pip/uv pull wheels), run offline (--network none). Build-time
+#     network does not violate SPEC 6; that control is a runtime one.
+#   * No GPU at build time. CUDA needs the driver injected via CDI (Podman) or --gpus
+#     (Docker) at run time. Do not run torch smoke tests here; check the GPU at first run (`gpuworker doctor`, then `gpuworker run-once echo.container`).
+#   * Weights are not baked in. They are staged separately, hash-verified, and mounted
+#     read-only at runtime (`gpuworker stage-weights`, SPEC 6.2). Provision scripts
+#     build venvs only. A credential needed for a gated download at build time must
+#     come via BuildKit `--mount=type=secret`, never an ENV/ARG layer.
+
+# Devel (not runtime) base: it ships nvcc + CUDA headers, because some models JIT-compile
+# CUDA kernels at run time (for example via ninja -> nvcc) and have no fallback, so the toolchain
+# must be in the image. Costs a few GB shared across all modules; a slim multi-stage AOT
+# build (compile at build, copy the cache into a runtime stage) is a possible optimization.
+# Pinned by digest (the multi-arch index of nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04),
+# so a rebuild cannot pick up a different base under the same tag. To move it, override
+# both: --build-arg CUDA_TAG=... --build-arg CUDA_DIGEST=sha256:...
+ARG CUDA_TAG=12.8.0-cudnn-devel-ubuntu22.04
+ARG CUDA_DIGEST=sha256:c900a2ac7f3d860c854f7364eadfe32b8cd33933a838f96b71e9bb6525f77a8c
+FROM nvidia/cuda:${CUDA_TAG}@${CUDA_DIGEST}
+
+# --- base system: python, venv tooling, ffmpeg, git, JIT toolchain --------------
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip python3-dev \
+        ffmpeg \
+        git ca-certificates curl \
+        build-essential ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+# build-essential (g++) + ninja-build are the host side of a runtime CUDA JIT; nvcc +
+# CUDA headers come from the -devel base above. A system library a module needs at run
+# time belongs here (add it to the apt line), since the module venvs cannot carry it.
+# ffmpeg is one: torchaudio reads audio files through torchcodec, which loads the ffmpeg
+# libraries.
+
+# --- non-root runtime user (the broker also enforces --user at run) ----------
+RUN useradd --create-home --uid 1000 worker \
+    && mkdir -p /opt/venvs /job/bundle /job/out /job/weights \
+    && chown -R worker:worker /opt/venvs /job
+
+# --- per-module venvs: each module is a self-contained modules/<name>/ -----------
+# A single COPY of the whole modules/ tree (module.toml + provision.sh + committed
+# src/). Everything is in this repo, so the build needs no clone and no SSH. Each
+# modules/<name>/provision.sh builds /opt/venvs/<name> from its own ./src.
+COPY modules/ /opt/modules/
+RUN chmod +x /opt/modules/*/provision.sh || true
+# PROVISION_ONLY: space-separated module dirs to build (for example "echo mymodule").
+# Empty = all. Use "echo" for a fast self-contained first build.
+ARG PROVISION_ONLY=""
+# Continue on failure: a failed module provision does not abort the build, so one build
+# reports every module's outcome. Each status is recorded to /opt/modules/.provision_status
+# and the build succeeds with a partial image (set -e is deliberately off here; set -u
+# stays); images/build.sh then reads that file, refuses to pin a partial image, and exits
+# non-zero.
+RUN set -u; \
+    : > /opt/modules/.provision_status; \
+    failed=""; \
+    for d in /opt/modules/*/; do \
+        b="$(basename "$d")"; \
+        case "$b" in _*|.*) continue;; esac; \
+        [ -f "$d/provision.sh" ] || continue; \
+        if [ -n "${PROVISION_ONLY:-}" ]; then \
+            case " $PROVISION_ONLY " in *" $b "*) ;; *) echo "SKIP $b"; echo "$b SKIP" >> /opt/modules/.provision_status; continue;; esac; \
+        fi; \
+        echo "== provisioning $b =="; \
+        if "$d/provision.sh"; then \
+            echo "OK   $b"; echo "$b OK" >> /opt/modules/.provision_status; \
+        else \
+            echo "FAIL $b (continuing so other modules still build)"; \
+            echo "$b FAIL" >> /opt/modules/.provision_status; failed="$failed $b"; \
+        fi; \
+    done; \
+    if [ -n "$failed" ]; then echo "=== PROVISION FAILURES:$failed ==="; fi; \
+    echo "(build continues; status in /opt/modules/.provision_status)"; \
+    echo "=== slim: strip runtime-unneeded cruft IN THIS LAYER (so deletes shrink the image) ==="; \
+    rm -rf /root/.cache /home/worker/.cache /tmp/* /var/tmp/* 2>/dev/null || true; \
+    find /opt/venvs /opt/modules -depth -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; \
+    find /opt/venvs /opt/modules -depth -type d -name '.git' -exec rm -rf {} + 2>/dev/null || true; \
+    find /opt/venvs /opt/modules -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete 2>/dev/null || true; \
+    echo "--- per-venv size after slim ---"; \
+    du -sh /opt/venvs/* /opt 2>/dev/null | sort -h || true
+
+USER worker
+WORKDIR /job
+# No ENTRYPOINT/CMD: the broker passes each job type's entrypoint (which selects its
+# venv, for example /opt/venvs/echo/bin/python /opt/echo/worker.py) at run time.

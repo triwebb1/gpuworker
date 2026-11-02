@@ -1,0 +1,47 @@
+# Speech module: text-to-speech in the voice of a reference recording (VoxCPM2, in a warm
+# serve container), and a quality check of each rendered file (Whisper, as a separate
+# oneshot job). Both run from one venv (/opt/venvs/speech) in the shared image. Weights are
+# staged per job type and mounted read-only; see README.md.
+[module]
+name    = "speech"
+version = "0.1.0"
+
+# VoxCPM2 is expensive to load (torch.compile plus a warm-up generation in the constructor),
+# so it runs in serve mode and pays that once per warm period. `strict`: the voxcpm package
+# brings a large dependency tree, so the type requires a pinned image and sealed weights.
+# vram_mb is the declaration; the broker raises it if a solo load measures higher.
+[[job_type]]
+id                = "speech.voxcpm2"
+resource_class    = "vram"
+vram_mb           = 8000
+vram_profile      = "growing"
+co_resident       = false
+env               = "container"
+entrypoint        = ["/opt/venvs/speech/bin/python", "-m", "speech.tts"]
+modes             = ["serve"]
+serve_socket      = "/run/gpuworker/job.sock"
+load_cost_s       = 90
+keep_warm_s       = 180
+sandbox           = "strict"
+# torch.compile and Triton write caches under $HOME, which is read-only in the sandbox.
+fixed_env         = { HOME = "/tmp", XDG_CACHE_HOME = "/tmp/.cache" }
+# One job renders a whole text, chunk by chunk; longer texts are split across jobs (see
+# README.md). A bundle's summed timeouts should stay under the broker's reclaim_after_s
+# (default 7200), so a bundle holds a few jobs of this type at most (MODULE_GUIDE 1.6).
+serve_job_timeout = 1800
+
+# The check loads only Whisper. faster-whisper reads a CTranslate2 model.bin, not a pickle,
+# so `standard` is enough. Why this is a separate type is in src/speech/check.py.
+[[job_type]]
+id               = "speech.check"
+resource_class   = "vram"
+vram_mb          = 6000
+vram_profile     = "growing"
+co_resident      = false
+env              = "container"
+entrypoint       = ["/opt/venvs/speech/bin/python", "-m", "speech.check"]
+modes            = ["oneshot"]
+load_cost_s      = 30
+keep_warm_s      = 0
+sandbox          = "standard"
+weights_required = true

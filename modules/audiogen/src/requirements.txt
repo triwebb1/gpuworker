@@ -1,0 +1,10 @@
+# Installed after torch from the CUDA 12.8 index (see provision.sh). Pinned to what pip
+# resolves for the image's Python 3.10 with torch 2.11.0.
+diffusers==0.41.0
+transformers==5.20.2
+accelerate==1.15.0
+torchsde==0.2.6        # the CosineDPMSolver scheduler Stable Audio Open uses
+scipy==1.15.3
+sentencepiece==0.2.2   # T5 text encoder
+protobuf==7.36.2
+numpy==2.2.6

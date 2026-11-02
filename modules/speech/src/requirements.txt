@@ -1,0 +1,7 @@
+# Installed after torch 2.11.0 and torchaudio 2.11.0 from the CUDA 12.8 index (see
+# provision.sh). torchaudio reads audio files through torchcodec, whose releases each match
+# one torch release; 0.11 is the one for torch 2.11.
+voxcpm==2.0.3
+faster-whisper==1.2.1
+torchcodec==0.11.1
+numpy

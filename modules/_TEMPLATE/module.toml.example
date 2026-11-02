@@ -1,0 +1,18 @@
+# Copy to modules/<your-module>/module.toml and fill in. The broker scans
+# modules/*/module.toml (this file is skipped because it is named .example). See docs/MODULE_GUIDE.md section 2.
+[module]
+name    = "<module>"
+version = "0.1.0"
+
+[[job_type]]
+id             = "<module>.<name>"
+resource_class = "vram"            # vram | cpu
+vram_mb        = 6000              # measured peak (vram lane); 0 for cpu
+vram_profile   = "growing"         # preallocated | growing
+co_resident    = false
+env            = "container"        # image omitted -> shared sandbox image
+entrypoint     = ["/opt/venvs/<module>/bin/python", "-m", "<your.worker>"]
+modes          = ["oneshot"]       # or ["serve"] for a warm process (MODULE_GUIDE 3.2)
+load_cost_s    = 30
+keep_warm_s    = 120
+sandbox        = "standard"        # none | standard | strict

@@ -1,0 +1,86 @@
+# gpuworker broker config (SPEC 11). Copy to gpuworker.toml and tune per host.
+# gpuworker.toml itself is per-host and git-ignored. Relative paths resolve against the
+# broker's working directory, not this file's (the README's systemd unit sets it).
+
+# --- VRAM budget (example: a 16 GB card) -------------------------------------
+# Total VRAM the broker manages. The margin under physical comes from headroom (applied
+# once in the admission ceiling); keep this at the physical total so a single model that
+# nearly fills the card still fits.
+gpu_budget_mb     = 16384
+headroom_mb       = 1024      # slack for CUDA context + allocator fragmentation.
+                              # The reclaim gate requires (footprint + headroom) free, so for
+                              # a model that nearly fills the card this must be small (down
+                              # to 0 if the worker bounds its own peak).
+nvml_poll_ms      = 250
+reclaim_timeout_s = 30.0      # reclaim-gate timeout before declaring GPU degraded
+
+# --- discovery --------------------------------------------------------------
+registry_dir    = "modules"   # scans modules/<name>/module.toml
+weights_dir     = "weights"
+# The broker's own working files (unpacked bundles, job output dirs, serve container
+# roots). Keep it on local disk and outside every queue root: clients can write their
+# queue tree, and the broker refuses to start if the two nest. `serve` clears it at start.
+state_dir       = "state"
+footprints_path = "footprints.json"   # learned reality-vs-spec footprints (per host)
+# Per-client queue trees the broker drains (SPEC 7). Each client needs write access to its
+# own tree's inbox/ and read access to its outbox/, nothing more. A tree can live on local
+# disk or on a network share mounted into Linux; the broker is a Linux process, so these
+# must be Linux paths, not Windows UNC or drive-letter paths.
+queue_roots  = [
+  "./queues/example",
+  # "/srv/gpuworker/queues/another-client",
+]
+
+# --- lanes ------------------------------------------------------------------
+cpu_slots       = 2           # concurrent cpu-lane jobs (they run beside a vram model)
+
+# --- scheduler / observability ----------------------------------------------
+max_claims_per_tick    = 8        # cap bundles claimed+unpacked per loop (responsiveness)
+max_bundle_members     = 10000    # intake limit: entries per bundle
+max_bundle_mb          = 8192     # intake limit: bytes extracted per bundle
+max_output_mb          = 8192     # largest single output file a job may return
+# Optional per-queue priority ceiling, keyed by the queue root as written in queue_roots:
+# [max_priority]
+# "/srv/gpuworker/queues/example" = 10
+footprint_variance_tol = 0.10     # log a footprint_variance when observed > declared*(1+tol)
+status_path            = "status.json"   # live GPU+queue+per-module snapshot (per host)
+
+# --- serve mode (warm container per resident serve job type, SPEC 8) ---------
+serve_connect_timeout_s = 60.0    # wait for the worker to bind its socket (should be quick)
+serve_ready_timeout_s   = 600.0   # wait for `ready` after connect; covers the model load
+                                  # (a heavy model's cold start can take minutes)
+serve_stage_slack_s     = 300.0   # extra watchdog allowance for per-job stage-in (a copy
+                                  # of the job's inputs within state_dir) on top of the job's
+                                  # own timeout, so copying a large bundle can't fail a
+                                  # healthy in-flight serve job
+tmpfs_mb                = 2048    # size cap of each container's /tmp tmpfs (mounted `exec`):
+                                  # JIT-compiled CUDA kernels, local sockets, small scratch
+
+# --- runtime ----------------------------------------------------------------
+container_runtime = "podman"  # podman | docker | local  (local = no container; dev/tests)
+# uid:gid every container runs as; match the owner of weights_dir and state_dir. Root (uid
+# 0) is refused.
+container_user = "1000:1000"
+gpu_index         = 0
+
+# --- sandbox image (one shared image; see images/Dockerfile.sandbox) ---------
+# Unpinned tags are refused by default. For a first bring-up on a dev tag, set
+# allow_unpinned_images = true, then pin the image and set it back. A `strict` job type
+# refuses to run on an unpinned tag regardless of the flag. Two pin forms are accepted: a registry digest
+# (repo@sha256:<hex>) or the local image id (sha256:<hex>, printed by
+# `images/build.sh --pin` when the image is not pushed). A local id is valid only on the
+# daemon that built it: if you copy this config to another host or rebuild the image,
+# re-pin (`images/build.sh --repin` rewrites an existing local-id pin).
+sandbox_image          = "gpuworker/sandbox:cuda12.8"
+# With container_runtime = "local", run container job types as host processes anyway
+# (no isolation). Development only; `host` types run under "local" without it.
+allow_unsandboxed_containers = false
+# With podman or docker, also run `host` job types (echo.echo) as host processes. They
+# run with no sandbox, so leave this off outside dev bring-up.
+allow_host_jobs = false
+allow_unpinned_images  = false  # true only for a dev bring-up on an unpinned tag
+
+# --- reliability ------------------------------------------------------------
+default_timeout_s = 1800
+max_retries       = 1         # infra-failure retries only, then quarantine (SPEC 10); 0 disables
+reclaim_after_s   = 7200.0    # dead-worker batch reclaim from processing/

@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+# Local pytest tmp root (not configured by default; safe to delete).
+/.pytest-tmp/
+/.venv/
+/venv/
+
+# Per-host config + runtime state (SPEC 11)
+gpuworker.toml
+/status.json
+footprints.json
+*.log
+
+# Staged weight caches are large + per-host (SPEC 6.2); keep the dir, not contents
+/weights/*
+!/weights/README.md
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# Local queue trees, broker state, job payloads and generated outputs
+/queues/
+/state/
+/jobs/
+/outputs/

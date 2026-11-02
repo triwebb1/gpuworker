@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpuworker"
+dynamic = ["version"]
+description = "Single-node GPU job broker: VRAM-budgeted admission, warm model containers and sandboxed job execution."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "triwebb1" }]
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.optional-dependencies]
+# NVML bindings for live VRAM readings; without them the broker falls back to
+# polling nvidia-smi (gpu.make_monitor).
+nvml = ["nvidia-ml-py"]
+# numpy is for the model modules' tests (tests/test_example_modules.py); the broker
+# does not use it.
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/triwebb1/gpuworker"
+Source = "https://github.com/triwebb1/gpuworker"
+
+[project.scripts]
+gpuworker = "gpuworker.cli:main"
+
+[tool.setuptools]
+packages = ["gpuworker"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gpuworker.__version__" }
+
+[tool.pytest.ini_options]
+pythonpath = [".", "tests"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["gpuworker"]
+known-local-folder = ["helpers"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["gpuworker"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+# The broker is a Linux process (natively or in WSL2); check it as one on any dev host.
+platform = "linux"
+
+[[tool.mypy.overrides]]
+module = ["pynvml"]
+ignore_missing_imports = true

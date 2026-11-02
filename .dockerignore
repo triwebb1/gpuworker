@@ -1,0 +1,14 @@
+# Build context = repo root; the Dockerfile only needs modules/. Exclude the rest.
+.git
+weights
+queues
+state
+tests
+docs
+gpuworker.toml
+status.json
+footprints.json
+*.log
+__pycache__
+.pytest_cache
+*.egg-info

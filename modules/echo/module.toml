@@ -1,0 +1,55 @@
+# Echo module: no-op job types for proving the broker end-to-end (see the README quick start).
+# echo.echo runs on the `cpu` lane via the local launcher (no container, no GPU) so the
+# transport + scheduler + reliability path can be exercised on any machine. It loads
+# no model.
+[module]
+name    = "echo"
+version = "0.1.0"
+
+[[job_type]]
+id             = "echo.echo"
+resource_class = "cpu"
+vram_mb        = 0
+env            = "host"
+entrypoint     = ["python", "modules/echo/src/worker.py"]
+modes          = ["oneshot"]
+load_cost_s    = 0
+keep_warm_s    = 0
+# `none` is allowed off the vram lane: echo runs no model code, only the broker's own
+# worker script.
+sandbox        = "none"
+
+# Containerized echo: the bring-up smoke test of the broker's container launch path.
+# Runs in the shared image (build it with `images/build.sh --only echo`). Proves the
+# broker can start a Docker/Podman container with the sandbox flags, the bundle (RO) and
+# out (RW) mounts and the env contract, run the worker, and collect the output. It is on
+# the cpu lane, so it gets no GPU; echo.serve below is the GPU-lane smoke test.
+[[job_type]]
+id             = "echo.container"
+resource_class = "cpu"
+vram_mb        = 0
+env            = "container"        # image omitted -> shared sandbox image
+entrypoint     = ["/opt/venvs/echo/bin/python", "/opt/echo/worker.py"]
+modes          = ["oneshot"]
+load_cost_s    = 0
+keep_warm_s    = 0
+sandbox        = "none"  # the container still gets every sandbox flag; see SPEC 6.1
+
+# Serve-mode echo: the bring-up smoke test of the broker's serve lifecycle (warm
+# container, jobs streamed over the unix socket). vram lane with a tiny footprint so it
+# exercises the resident/keep-warm/eviction path; loads no real model. Reference serve
+# worker: modules/echo/src/serve_worker.py.
+[[job_type]]
+id               = "echo.serve"
+resource_class   = "vram"
+vram_mb          = 10
+vram_profile     = "preallocated"
+env              = "container"
+entrypoint       = ["/opt/venvs/echo/bin/python", "/opt/echo/serve_worker.py"]
+modes            = ["serve"]
+serve_socket     = "/run/gpuworker/job.sock"
+serve_job_timeout = 30
+load_cost_s      = 5
+keep_warm_s      = 30
+co_resident      = false
+sandbox          = "standard"

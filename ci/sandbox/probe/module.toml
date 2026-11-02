@@ -1,0 +1,17 @@
+# Sandbox probe, for ci/sandbox/run.py only: a container job type that reports what its
+# container can do (user, capabilities, writable paths, network). It is not in the
+# broker's registry; run.py builds a registry of echo and this module.
+[module]
+name    = "probe"
+version = "0.1.0"
+
+[[job_type]]
+id             = "probe.sandbox"
+resource_class = "cpu"
+vram_mb        = 0
+env            = "container"
+entrypoint     = ["/usr/local/bin/python3", "/opt/probe/probe.py"]
+modes          = ["oneshot"]
+load_cost_s    = 0
+keep_warm_s    = 0
+sandbox        = "none"  # the container still gets every sandbox flag; see SPEC 6.1
